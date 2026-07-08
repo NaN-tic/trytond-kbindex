@@ -1,0 +1,19 @@
+msgctxt "model:ir.action,name:act_kb_index"
+msgid "Index"
+msgstr "Index"
+
+msgctxt "model:ir.action,name:act_kb_reindex"
+msgid "Reindex Model"
+msgstr "Reindexar models"
+
+msgctxt "model:ir.message,text:msg_index_copy_forbidden"
+msgid "Copying index entries is not permitted."
+msgstr "No es permet copiar entrades d'index."
+
+msgctxt "model:ir.ui.menu,name:menu_index_administration"
+msgid "Index"
+msgstr "Index"
+
+msgctxt "model:ir.ui.menu,name:menu_kb_reindex"
+msgid "Reindex Model"
+msgstr "Reindexar models"

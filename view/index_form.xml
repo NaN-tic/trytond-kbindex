@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- This file is part of Tryton.  The COPYRIGHT file at the top level of
+this repository contains the full copyright notices and license terms. -->
+<form>
+    <label name="resource"/>
+    <field name="resource"/>
+    <label name="language_code"/>
+    <field name="language_code"/>
+    <notebook colspan="4">
+        <page name="text">
+            <field name="text" colspan="4" height="500"/>
+        </page>
+    </notebook>
+</form>

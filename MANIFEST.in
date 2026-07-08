@@ -1,0 +1,5 @@
+include README
+include tryton.cfg
+include *.xml
+include view/*.xml
+include locale/*.po

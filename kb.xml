@@ -1,0 +1,59 @@
+<tryton>
+    <data>
+        <record model="ir.message" id="msg_index_copy_forbidden">
+            <field name="text">Copying index entries is not permitted.</field>
+        </record>
+
+        <record model="ir.ui.view" id="view_kb_index_form">
+            <field name="model">kb.index</field>
+            <field name="type">form</field>
+            <field name="name">index_form</field>
+        </record>
+
+        <record model="ir.ui.view" id="view_kb_index_list">
+            <field name="model">kb.index</field>
+            <field name="type">tree</field>
+            <field name="name">index_list</field>
+        </record>
+
+        <record model="ir.ui.view" id="kb_reindex_question_form_view">
+            <field name="model">kb.reindex.question</field>
+            <field name="type">form</field>
+            <field name="name">reindex_question_form</field>
+        </record>
+        <record model="ir.ui.view" id="kb_reindex_result_form_view">
+            <field name="model">kb.reindex.result</field>
+            <field name="type">form</field>
+            <field name="name">reindex_result_form</field>
+        </record>
+
+        <record model="ir.action.act_window" id="act_kb_index">
+            <field name="name">Index</field>
+            <field name="res_model">kb.index</field>
+        </record>
+        <record model="ir.action.act_window.view" id="act_kb_index_form">
+            <field name="sequence" eval="20"/>
+            <field name="view" ref="view_kb_index_form"/>
+            <field name="act_window" ref="act_kb_index"/>
+        </record>
+        <record model="ir.action.act_window.view" id="act_kb_index_list">
+            <field name="sequence" eval="10"/>
+            <field name="view" ref="view_kb_index_list"/>
+            <field name="act_window" ref="act_kb_index"/>
+        </record>
+
+        <menuitem id="menu_index_administration" name="Index"
+            parent="ir.menu_models" sequence="90" icon="tryton-list"
+            action="act_kb_index"/>
+
+        <record model="ir.action.wizard" id="act_kb_reindex">
+            <field name="name">Reindex Model</field>
+            <field name="wiz_name">kb.reindex</field>
+        </record>
+        <menuitem name="Reindex Model"
+            parent="menu_index_administration"
+            action="act_kb_reindex"
+            id="menu_kb_reindex"
+            sequence="100"/>
+    </data>
+</tryton>
