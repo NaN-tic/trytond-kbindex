@@ -430,9 +430,9 @@ class KbIndex(ModelSQL, ModelView):
     @classmethod
     def compute_embedding(cls, text):
         try:
-            Configuration = Pool().get('nantic.ai.configuration')
+            Configuration = Pool().get('ai.configuration')
         except KeyError:
-            logger.error("nantic.ai.configuration is not available.")
+            logger.error("ai.configuration is not available.")
             return
 
         if not text or not text.strip():
