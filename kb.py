@@ -22,8 +22,6 @@ from trytond.wizard import Button, StateTransition, StateView, Wizard
 
 EMBEDDINGS_DIMENSION = 1536
 TOKEN_LIMIT = 8192
-EMBEDDING_MODEL = 'text-embedding-3-small'
-
 logger = logging.getLogger(__name__)
 
 
@@ -376,12 +374,12 @@ class KbIndex(ModelSQL, ModelView):
             limit=limit, word_len=3)
 
     @classmethod
-    def search_embedding(cls, content, threshold=1,
+    def search_embedding(cls, content, origin, threshold=1,
             ref_filters: dict[str:list[tuple]] = None, language=None, limit=0):
         cls.search_check(content, ref_filters, language, limit)
         assert 0 <= threshold <= 2
         if isinstance(content, str):
-            embedding = cls.compute_embedding(content)
+            embedding = cls.compute_embedding(content, origin)
         else:
             embedding = content
 
@@ -428,7 +426,7 @@ class KbIndex(ModelSQL, ModelView):
         return [(model.name, model.string) for model in models]
 
     @classmethod
-    def compute_embedding(cls, text):
+    def compute_embedding(cls, text, origin):
         try:
             Configuration = Pool().get('ai.configuration')
         except KeyError:
@@ -438,16 +436,14 @@ class KbIndex(ModelSQL, ModelView):
         if not text or not text.strip():
             return
         configuration = Configuration(1)
-        client = configuration.get_default_embedding_client()
-        embedding_model = (
-            configuration.default_embedding_model.model_name
-            if configuration.default_embedding_model else EMBEDDING_MODEL)
-        if not client:
-            logger.error("OpenAI is not configured.")
+        embedding_model = configuration.get_default_embedding_model()
+        if not embedding_model.get_client():
+            logger.error("OpenRouter is not configured.")
             return
 
         try:
-            encoding = tiktoken.encoding_for_model(embedding_model)
+            encoding = tiktoken.encoding_for_model(
+                embedding_model.model_name.split('/')[-1])
         except KeyError:
             encoding = tiktoken.get_encoding('cl100k_base')
         tokens = encoding.encode(text)
@@ -458,18 +454,16 @@ class KbIndex(ModelSQL, ModelView):
                 f'(from {len(tokens)}).')
             text = encoding.decode(tokens[:TOKEN_LIMIT])
 
-        response = client.embeddings.create(
-            model=embedding_model,
-            input=text,
-            encoding_format='float',
+        response = embedding_model.get_embeddings(
+            text, origin, encoding_format='float',
             dimensions=EMBEDDINGS_DIMENSION,
-        )
+            )
         return response.data[0].embedding
 
     @classmethod
     def compute(cls, records):
         for record in records:
-            record.embedding = record.compute_embedding(record.text)
+            record.embedding = record.compute_embedding(record.text, record)
         cls.save(records)
 
     @classmethod
