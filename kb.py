@@ -9,7 +9,7 @@ from pgvector.psycopg import register_vector
 from sql import Asc, Cast, Desc, Literal
 from sql.functions import CharLength, Function, Position, Substring
 from sql.operators import (
-    Add, And, BinaryOperator, Equal, GreaterEqual, In, LessEqual, Or, Sub)
+    Add, BinaryOperator, Equal, GreaterEqual, In, LessEqual, Or, Sub)
 from trytond import backend
 from trytond.exceptions import UserError
 from trytond.i18n import gettext
@@ -132,7 +132,7 @@ class KbIndex(ModelSQL, ModelView):
                     txt
                 );
             END;
-            $$ LANGUAGE plpgsql;
+            $$ LANGUAGE plpgsql IMMUTABLE;
         """)
         try:
             cursor.execute('SAVEPOINT create_index;')
@@ -235,22 +235,22 @@ class KbIndex(ModelSQL, ModelView):
     def _process_resource_filters(cls, ref_filters, table):
         sql_converted_filters = []
         for model_name, domain in ref_filters.items():
-            filter_table = Pool().get(model_name)
-            subquery = filter_table.search(domain=domain, query=True)
             delimiter_position = Position(',', table.resource)
-            resource_model = Substring(table.resource, 0, delimiter_position)
-            resource_id = Cast(
-                Substring(
-                    table.resource,
-                    Add(delimiter_position, 1),
-                    Sub(CharLength(table.resource),
-                        Add(CharLength(resource_model), 1))),
-                'INTEGER')
-
-            sql_converted_filters.append(And([
-                Equal(resource_model, Literal(model_name)),
-                In(resource_id, subquery),
-            ]))
+            resource_model = Substring(
+                table.resource, 1, delimiter_position - 1)
+            condition = Equal(resource_model, Literal(model_name))
+            if domain:
+                filter_table = Pool().get(model_name)
+                subquery = filter_table.search(domain=domain, query=True)
+                resource_id = Cast(
+                    Substring(
+                        table.resource,
+                        Add(delimiter_position, 1),
+                        Sub(CharLength(table.resource),
+                            Add(CharLength(resource_model), 1))),
+                    'INTEGER')
+                condition &= In(resource_id, subquery)
+            sql_converted_filters.append(condition)
 
         return Or(sql_converted_filters)
 
@@ -301,7 +301,7 @@ class KbIndex(ModelSQL, ModelView):
 
     @classmethod
     def search_ilike(cls, content, ref_filters=None, language=None, limit=0,
-            word_len=0):
+            word_len=0, weights=None):
         cls.search_check(content, ref_filters, language, limit)
         table = cls.__table__()
         words = [
@@ -316,6 +316,8 @@ class KbIndex(ModelSQL, ModelView):
 
         select = table.select(table.id, table.text)
         select.where = condition
+        if weights:
+            select.where &= table.weight.in_(weights)
         select = cls.search_vars_to_query(
             table, select, ref_filters, language, limit)
 
@@ -341,9 +343,20 @@ class KbIndex(ModelSQL, ModelView):
 
     @classmethod
     def search_text(cls, content, ref_filters: dict[str:list[tuple]] = None,
-            language=None, limit=0):
+            language=None, limit=0, weights=None):
         content = content.strip()
         cls.search_check(content, ref_filters, language, limit)
+        if language is None:
+            results = {}
+            for language_code, _ in cls.language_code.selection:
+                results.update(cls.search_text(
+                        content, ref_filters, language_code,
+                        weights=weights))
+            results = dict(sorted(
+                    results.items(), key=lambda item: item[1], reverse=True))
+            if limit:
+                results = dict(list(results.items())[:limit])
+            return results
         query_content = cls._sanitize_tsquery_content(content)
         if not query_content:
             return {}
@@ -357,7 +370,9 @@ class KbIndex(ModelSQL, ModelView):
         rank = RankTextSearch(weighted_vector, fts_query, 1).as_('rank')
 
         query.columns = [table.id.as_('id'), rank]
-        query.where = MatchTextSearch(weighted_vector, fts_query)
+        query.where = MatchTextSearch(base_vector, fts_query)
+        if weights:
+            query.where &= table.weight.in_(weights)
         query.order_by = Desc(rank)
         query = cls.search_vars_to_query(
             table, query, ref_filters, language, limit)
@@ -371,7 +386,63 @@ class KbIndex(ModelSQL, ModelView):
         if len(content.strip()) < 4:
             return {}
         return cls.search_ilike(content, ref_filters, language,
-            limit=limit, word_len=3)
+            limit=limit, word_len=3, weights=weights)
+
+    @classmethod
+    def search_resource_ids(cls, content, model, domain=None, language=None,
+            limit=0, weights=None):
+        """Return resource IDs whose indexed text matches *content*."""
+        domain = domain or []
+        if backend.name == 'postgresql':
+            index_scores = cls.search_text(
+                content, {model: domain}, language=language, weights=weights)
+            index_ids = list(index_scores)
+        else:
+            Resource = Pool().get(model)
+            resources = Resource.search(domain)
+            references = [str(resource) for resource in resources]
+            if not references:
+                return []
+            index_domain = [
+                    ('text', 'ilike', f'%{content.strip()}%'),
+                    ('resource', 'in', references),
+                    ]
+            if weights:
+                index_domain.append(('weight', 'in', weights))
+            indexes = cls.search(index_domain)
+            index_ids = [index.id for index in indexes]
+
+        if not index_ids:
+            return []
+        table = cls.__table__()
+        cursor = Transaction().connection.cursor()
+        references = {}
+        for sub_ids in grouped_slice(index_ids):
+            where = table.id.in_(list(sub_ids))
+            if weights:
+                where &= table.weight.in_(weights)
+            cursor.execute(*table.select(
+                    table.id, table.resource,
+                    where=where))
+            references.update(cursor.fetchall())
+
+        prefix = f'{model},'
+        resource_ids = []
+        seen = set()
+        for index_id in index_ids:
+            reference = references.get(index_id, '')
+            if not reference.startswith(prefix):
+                continue
+            try:
+                resource_id = int(reference[len(prefix):])
+            except ValueError:
+                continue
+            if resource_id not in seen:
+                resource_ids.append(resource_id)
+                seen.add(resource_id)
+                if limit and len(resource_ids) >= limit:
+                    break
+        return resource_ids
 
     @classmethod
     def search_embedding(cls, content, origin, threshold=1,
