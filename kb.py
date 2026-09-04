@@ -22,6 +22,37 @@ from trytond.wizard import Button, StateTransition, StateView, Wizard
 
 EMBEDDINGS_DIMENSION = 1536
 TOKEN_LIMIT = 8192
+FTS_CONFIGURATIONS = {
+    'ar': 'arabic',
+    'hy': 'armenian',
+    'eu': 'basque',
+    'ca': 'catalan',
+    'da': 'danish',
+    'nl': 'dutch',
+    'en': 'english',
+    'et': 'estonian',
+    'fi': 'finnish',
+    'fr': 'french',
+    'de': 'german',
+    'el': 'greek',
+    'hi': 'hindi',
+    'hu': 'hungarian',
+    'id': 'indonesian',
+    'ga': 'irish',
+    'it': 'italian',
+    'lt': 'lithuanian',
+    'ne': 'nepali',
+    'no': 'norwegian',
+    'pt': 'portuguese',
+    'ro': 'romanian',
+    'ru': 'russian',
+    'sr': 'serbian',
+    'es': 'spanish',
+    'sv': 'swedish',
+    'ta': 'tamil',
+    'tr': 'turkish',
+    'yi': 'yiddish',
+    }
 logger = logging.getLogger(__name__)
 
 
@@ -71,11 +102,8 @@ class KbIndex(ModelSQL, ModelView):
     weight = fields.Char("Weight",
         help="Priority of the index record. 'A' for high priority, "
         "'D' for default.")
-    language_code = fields.Selection([
-            ('es', 'Spanish'),
-            ('ca', 'Catalan'),
-            ('en', 'English'),
-            ], 'Language Code', required=True, readonly=True)
+    language_code = fields.Selection(
+        'get_languages', 'Language Code', required=True, readonly=True)
 
     @classmethod
     def __setup__(cls):
@@ -94,6 +122,19 @@ class KbIndex(ModelSQL, ModelView):
         if backend.name == 'postgresql':
             cursor = cls.get_cursor()
 
+            cursor.execute("""
+                SELECT cfgname
+                FROM pg_catalog.pg_ts_config
+                WHERE cfgnamespace = 'pg_catalog'::regnamespace
+            """)
+            available_configurations = {
+                name for name, in cursor.fetchall()}
+            configuration_cases = '\n'.join(
+                f"            WHEN '{code}' "
+                f"THEN 'pg_catalog.{configuration}'"
+                for code, configuration in FTS_CONFIGURATIONS.items()
+                if configuration in available_configurations)
+
         table = cls.__table_handler__(module_name)
         if table.column_exist('reference') and not table.column_exist('resource'):
             table.column_rename('reference', 'resource')
@@ -102,49 +143,77 @@ class KbIndex(ModelSQL, ModelView):
         if backend.name != 'postgresql':
             return
 
-        cursor.execute("""
-            CREATE OR REPLACE FUNCTION fts_vector(language varchar, txt text)
-            RETURNS tsvector AS $$
-            BEGIN
-                RETURN to_tsvector(
-                    CASE language
-                        WHEN 'en' THEN 'english'
-                        WHEN 'ca' THEN 'catalan'
-                        WHEN 'es' THEN 'spanish'
-                        ELSE 'simple'
-                    END::regconfig,
-                    txt
-                );
-            END;
-            $$ LANGUAGE plpgsql IMMUTABLE;
-        """)
-        cursor.execute("""
-            CREATE OR REPLACE FUNCTION fts_query(language varchar, txt text)
-            RETURNS tsquery AS $$
-            BEGIN
-                RETURN to_tsquery(
-                    CASE language
-                        WHEN 'en' THEN 'english'
-                        WHEN 'ca' THEN 'catalan'
-                        WHEN 'es' THEN 'spanish'
-                        ELSE 'simple'
-                    END::regconfig,
-                    txt
-                );
-            END;
-            $$ LANGUAGE plpgsql IMMUTABLE;
-        """)
-        try:
-            cursor.execute('SAVEPOINT create_index;')
+        vector_changed = False
+        for name, return_type, converter in [
+                ('fts_vector', 'tsvector', 'to_tsvector'),
+                ('fts_query', 'tsquery', 'to_tsquery'),
+                ]:
+            body = f"""BEGIN
+    RETURN {converter}(
+        CASE split_part(split_part(
+                replace(lower(language), '-', '_'), '_', 1),
+            '@', 1)
+{configuration_cases}
+            ELSE 'pg_catalog.simple'
+        END::regconfig,
+        txt
+    );
+END;"""
+            cursor.execute("""
+                SELECT p.prosrc = %s
+                    AND p.provolatile = 'i'
+                    AND l.lanname = 'plpgsql'
+                    AND p.prorettype = %s::regtype
+                FROM pg_catalog.pg_proc p
+                JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+                WHERE p.oid = to_regprocedure(format(
+                    '%%I.%%I(character varying,text)',
+                    current_schema(), %s::text))
+            """, (body, return_type, name))
+            current = cursor.fetchone()
+            if current and current[0]:
+                continue
             cursor.execute(f"""
-                CREATE INDEX kb_index_fts
-                ON {cls._table}
-                USING GIN (fts_vector(language_code, text));
+                CREATE OR REPLACE FUNCTION {name}(
+                    language varchar, txt text)
+                RETURNS {return_type} AS $function${body}$function$
+                LANGUAGE plpgsql IMMUTABLE
             """)
-        except psycopg.errors.DuplicateTable:
-            cursor.execute('ROLLBACK TO SAVEPOINT create_index;')
-        finally:
-            cursor.execute('RELEASE SAVEPOINT create_index;')
+            if name == 'fts_vector':
+                vector_changed = True
+        cursor.execute("""
+            SELECT i.indisvalid
+            FROM pg_catalog.pg_index i
+            JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = idx.relnamespace
+            JOIN pg_catalog.pg_class tbl ON tbl.oid = i.indrelid
+            JOIN pg_catalog.pg_namespace tn ON tn.oid = tbl.relnamespace
+            WHERE idx.relname = 'kb_index_fts'
+                AND n.nspname = current_schema()
+                AND tbl.relname = %s
+                AND tn.nspname = current_schema()
+        """, (cls._table,))
+        index = cursor.fetchone()
+        if index and (vector_changed or not index[0]):
+            cursor.execute('REINDEX INDEX kb_index_fts')
+        elif not index:
+            try:
+                cursor.execute('SAVEPOINT create_index;')
+                cursor.execute(f"""
+                    CREATE INDEX kb_index_fts
+                    ON {cls._table}
+                    USING GIN (fts_vector(language_code, text));
+                """)
+            except psycopg.errors.DuplicateTable:
+                cursor.execute('ROLLBACK TO SAVEPOINT create_index;')
+            finally:
+                cursor.execute('RELEASE SAVEPOINT create_index;')
+
+    @classmethod
+    def get_languages(cls):
+        Language = Pool().get('ir.lang')
+        return [(language.code, language.name)
+            for language in Language.search([])]
 
     @classmethod
     def search_rec_name(cls, _name, clause):
@@ -262,7 +331,7 @@ class KbIndex(ModelSQL, ModelView):
         assert isinstance(limit, int) and limit >= 0
 
         if language and language.strip():
-            assert language in [_[0] for _ in cls.language_code.selection]
+            assert language in dict(cls.get_languages())
 
         if isinstance(filters, dict):
             for ref, domain in filters.items():
@@ -348,7 +417,7 @@ class KbIndex(ModelSQL, ModelView):
         cls.search_check(content, ref_filters, language, limit)
         if language is None:
             results = {}
-            for language_code, _ in cls.language_code.selection:
+            for language_code, _ in cls.get_languages():
                 results.update(cls.search_text(
                         content, ref_filters, language_code,
                         weights=weights))
