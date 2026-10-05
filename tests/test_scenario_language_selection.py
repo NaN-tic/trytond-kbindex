@@ -23,6 +23,8 @@ class TestLanguageSelection(unittest.TestCase):
         custom, = english.duplicate({
                 'code': 'x-test',
                 'name': 'Test Language',
+                'translatable': False,
+                'pg_text_search': None,
                 })
 
         KbIndex = Model.get('kb.index')
