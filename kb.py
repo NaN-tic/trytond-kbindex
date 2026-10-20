@@ -7,6 +7,7 @@ import psycopg
 import tiktoken
 from pgvector.psycopg import register_vector
 from sql import Asc, Cast, Desc, Literal
+from sql.conditionals import Coalesce
 from sql.functions import CharLength, Function, Position, Substring
 from sql.operators import (
     Add, BinaryOperator, Equal, GreaterEqual, In, LessEqual, Or, Sub)
@@ -433,7 +434,11 @@ END;"""
         query = table.select()
 
         base_vector = FTSVector(table.language_code, table.text)
-        weight_as_char = Cast(table.weight, '\"char\"')
+        # ``setweight`` returns NULL when an index created without a weight is
+        # found.  Such a rank can not be sorted together with numeric ranks
+        # when searches in all languages are merged.  Treat an unset weight as
+        # PostgreSQL's default (D).
+        weight_as_char = Cast(Coalesce(table.weight, 'D'), '\"char\"')
         weighted_vector = SetWeight(base_vector, weight_as_char)
         fts_query = FTSQuery(language or table.language_code, query_content)
         rank = RankTextSearch(weighted_vector, fts_query, 1).as_('rank')
