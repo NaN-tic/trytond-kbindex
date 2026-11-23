@@ -595,7 +595,7 @@ END;"""
             text = encoding.decode(tokens[:TOKEN_LIMIT])
 
         response = embedding_model.get_embeddings(
-            text, origin, encoding_format='float', fallback_origin=embedding_model,
+            text, origin, encoding_format='float', parent_origin=embedding_model,
             dimensions=EMBEDDINGS_DIMENSION,
             )
         return response.data[0].embedding
