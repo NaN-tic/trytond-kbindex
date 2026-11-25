@@ -1,0 +1,28 @@
+#
+msgid ""
+msgstr ""
+"Language: km\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgctxt "model:ir.action,name:act_kb_index"
+msgid "Index"
+msgstr "លិបិក្រម"
+
+msgctxt "model:ir.action,name:act_kb_reindex"
+msgid "Reindex Model"
+msgstr "បង្កើតលិបិក្រមម៉ូដែលឡើងវិញ"
+
+msgctxt "model:ir.message,text:msg_index_copy_forbidden"
+msgid "Copying index entries is not permitted."
+msgstr "មិនអនុញ្ញាតឱ្យចម្លងធាតុលិបិក្រមទេ។"
+
+msgctxt "model:ir.ui.menu,name:menu_index_administration"
+msgid "Index"
+msgstr "លិបិក្រម"
+
+msgctxt "model:ir.ui.menu,name:menu_kb_reindex"
+msgid "Reindex Model"
+msgstr "បង្កើតលិបិក្រមម៉ូដែលឡើងវិញ"
